@@ -12,26 +12,88 @@
 #include <linux/workqueue.h>
 #include <linux/platform_device.h>
 #include "register_map.h"
+#include "driver.h"
 
 static struct tee_device *tee_dev;
 
-static volatile uint64_t *reg_base;
-static volatile uint64_t *reg_open_tee;
-static volatile uint64_t *reg_close_tee;
-static volatile uint64_t *reg_status;
+static volatile uint32_t *reg_base;
+static volatile uint32_t *reg_open_tee;
+static volatile uint32_t *reg_close_tee;
+static volatile uint32_t *reg_status;
+static volatile uint64_t *reg_ioctl_fd;
+static volatile uint64_t *reg_ioctl_num;
+static volatile uint64_t *reg_ioctl_phys_data_buffer;
+static volatile uint64_t *reg_ioctl_phys_data_buffer_length;
+static volatile uint64_t *reg_test;
+
+
+inline void wait_until_not_busy(void)
+{
+	// FIXME: This should take a lock instead
+	while(*reg_status & TP_MMIO_REG_STATUS_FLAG_BUSY)
+		;
+}
+
+inline bool last_operation_completed_successfully(void)
+{
+	return !(*reg_status & TP_MMIO_REG_STATUS_FLAG_ERROR);
+}
 
 static void tp_get_version(struct tee_device *tee_device,
 				struct tee_ioctl_version_data *ver)
 {
+	char buf[] = {1, 2, 3, 4};
 	pr_info("[tee_passthrough]: Requested version\n");
-	ver->impl_id = 1234;
-	ver->impl_caps = 0xcafebabe;
-	ver->gen_caps = 0xdeadb33f;
+
+	*reg_test = virt_to_phys(buf);
+
+	pr_info("[tee_passthrough]: buf contains (%x, %x, %x, %x)\n", buf[0], buf[1], buf[2], buf[3]);
+
+	wait_until_not_busy();
+	*reg_ioctl_num = TEE_IOC_VERSION;
+	pr_info("[tee_passthorugh]: phys addr of 'ver' is %px\n", (void*) virt_to_phys(ver));
+	*reg_ioctl_phys_data_buffer = virt_to_phys(ver);
+	*reg_ioctl_phys_data_buffer_length = sizeof(*ver);
+	// TEE_IOC_VERSION is a special case for which any file descriptor
+	// (even a non-existant one) will work
+	*reg_ioctl_fd = 0;
+
+	if (!last_operation_completed_successfully()) {
+		pr_info("[tee_passthrough]: FIXME: handle the error case\n");
+	}
+
+	pr_info("[tee_passthrough]: sizeof(tee_ioctl_version_data)=%lu\n", sizeof(*ver));
+	pr_info("[tee_passthrough]: id=%x\n", ver->impl_id);
 }
 
 static int tp_open(struct tee_context *ctx)
 {
+	int fd;
+	struct tee_passthrough_data *ctx_data;
+
+	ctx_data = kzalloc(sizeof(struct tee_passthrough_data), GFP_KERNEL);
+	if (!ctx_data) {
+		return -ENOMEM;
+	}
+
 	pr_info("[tee_passthrough]: tp_open was called\n");
+	pr_info("[tee_passthrough]: reg_base=%px\n", reg_base);
+	pr_info("[tee_passthrough]: reg_open_tee=%px\n", reg_open_tee);
+
+	wait_until_not_busy();
+	pr_info("[tee_passthrough]: not busy, going to open tee\n");
+	fd = (int) (*reg_open_tee);
+	if (!last_operation_completed_successfully()) {
+		pr_info("[tee_passthrough]: error flag is set, something bad happened");
+		kfree(ctx_data);
+		return -EAGAIN;
+	}
+
+	pr_info("[tee_passthrough]: Internal fd is %d\n", fd);
+	
+	ctx_data->fd = fd;
+
+	ctx->data = ctx_data;
 
 	return 0;
 }
@@ -173,11 +235,17 @@ static int tp_driver_init(void)
 	pr_info("[tee_passthrough]: Initializing TEE Passthrough\n");
 	
 	base = ioremap(TP_MMIO_BASE_ADDRESS, TP_MMIO_AREA_SIZE);
-	pr_info("[tee_passthrough]: Remapped MMIO area to %p\n", base);
+	pr_info("[tee_passthrough]: Remapped MMIO area to %px\n", base);
 
-	reg_base = (uint64_t*) base;
-	reg_open_tee = (uint64_t*) &base[TP_MMIO_REG_OFFSET_OPEN_TEE];
-	reg_close_tee = (uint64_t*) &base[TP_MMIO_REG_OFFSET_CLOSE_TEE];
+	reg_base = (uint32_t*) base;
+	reg_open_tee = (uint32_t*) &base[TP_MMIO_REG_OFFSET_OPEN_TEE];
+	reg_close_tee = (uint32_t*) &base[TP_MMIO_REG_OFFSET_CLOSE_TEE];
+	reg_status = (uint32_t*) &base[TP_MMIO_REG_OFFSET_STATUS];
+	reg_ioctl_fd = (uint64_t*) &base[TP_MMIO_REG_IOCTL_FD];
+	reg_ioctl_phys_data_buffer = (uint64_t*) &base[TP_MMIO_REG_IOCTL_PHYS_DATA_BUFFER];
+	reg_ioctl_phys_data_buffer_length = (uint64_t*) &base[TP_MMIO_REG_IOCTL_PHYS_DATA_BUFFER_LEN];
+	reg_ioctl_num = (uint64_t*) &base[TP_MMIO_REG_IOCTL_NUM];
+	reg_test = (uint64_t*) &base[0x50];
 
 	pr_info("[tee_passthrough]: Allocating the shared memory pool\n");
 	pool = tp_alloc_shm_pool();
