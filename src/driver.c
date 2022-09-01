@@ -39,30 +39,43 @@ inline bool last_operation_completed_successfully(void)
 	return !(*reg_status & TP_MMIO_REG_STATUS_FLAG_ERROR);
 }
 
+static int make_external_ioctl(int fd, uint64_t ioctl, void *buf, size_t buf_len)
+{
+	// Note: we need to ensure that buf was allocated via kmalloc or we
+	// cannot get the physical address of the area
+	void *temp_buf = kzalloc(buf_len, GFP_KERNEL);
+
+	if (temp_buf == NULL) {
+		return -ENOMEM;
+	}
+
+	wait_until_not_busy();
+
+	*reg_ioctl_num = ioctl;
+	*reg_ioctl_phys_data_buffer = virt_to_phys(temp_buf);
+	*reg_ioctl_phys_data_buffer_length = buf_len;
+	*reg_ioctl_fd = fd;
+
+	wait_until_not_busy();
+	memcpy(buf, temp_buf, buf_len);
+	kfree(temp_buf);
+
+	if (!last_operation_completed_successfully()) {
+		// FIXME: Actually handle the error
+		pr_info("[tee_passthrough]: Something went wrong while making the ioctl\n");
+		return -ENOTSUPP;
+	}
+
+	return 0;
+}
+
 static void tp_get_version(struct tee_device *tee_device,
 				struct tee_ioctl_version_data *ver)
 {
-	char buf[] = {1, 2, 3, 4};
-	pr_info("[tee_passthrough]: Requested version\n");
-
-	*reg_test = virt_to_phys(buf);
-
-	pr_info("[tee_passthrough]: buf contains (%x, %x, %x, %x)\n", buf[0], buf[1], buf[2], buf[3]);
-
-	wait_until_not_busy();
-	*reg_ioctl_num = TEE_IOC_VERSION;
-	pr_info("[tee_passthorugh]: phys addr of 'ver' is %px\n", (void*) virt_to_phys(ver));
-	*reg_ioctl_phys_data_buffer = virt_to_phys(ver);
-	*reg_ioctl_phys_data_buffer_length = sizeof(*ver);
 	// TEE_IOC_VERSION is a special case for which any file descriptor
 	// (even a non-existant one) will work
-	*reg_ioctl_fd = 0;
+	make_external_ioctl(0, TEE_IOC_VERSION, ver, sizeof(*ver));
 
-	if (!last_operation_completed_successfully()) {
-		pr_info("[tee_passthrough]: FIXME: handle the error case\n");
-	}
-
-	pr_info("[tee_passthrough]: sizeof(tee_ioctl_version_data)=%lu\n", sizeof(*ver));
 	pr_info("[tee_passthrough]: id=%x\n", ver->impl_id);
 }
 
