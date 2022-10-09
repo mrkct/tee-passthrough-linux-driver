@@ -72,11 +72,22 @@ static int make_external_ioctl(int fd, uint64_t ioctl, void *buf, size_t buf_len
 static void tp_get_version(struct tee_device *tee_device,
 				struct tee_ioctl_version_data *ver)
 {
+	void *temp_buf = kzalloc(sizeof(*ver), GFP_KERNEL);
+	if (temp_buf == NULL) {
+		pr_err("[tee_passthrough]: failed to alloc memory, cannot talk with the external tee\n");
+		*ver = (struct tee_ioctl_version_data){
+			.gen_caps = 0,
+			.impl_caps = 0,
+			.impl_id = 0
+		};
+		return;
+	}
+
 	// TEE_IOC_VERSION is a special case for which any file descriptor
 	// (even a non-existant one) will work
-	make_external_ioctl(0, TEE_IOC_VERSION, ver, sizeof(*ver));
-
-	pr_info("[tee_passthrough]: id=%x\n", ver->impl_id);
+	make_external_ioctl(0, TEE_IOC_VERSION, temp_buf, sizeof(*ver));
+	memcpy(ver, temp_buf, sizeof(*ver));
+	kfree(temp_buf);	
 }
 
 static int tp_open(struct tee_context *ctx)
