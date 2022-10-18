@@ -9,6 +9,8 @@
 #include <string.h>
 #include <assert.h>
 #include <stdint.h>
+#include "tee_client_api.h"
+
 
 // This is the "Increment Number" TA's UUID hardcoded in the module
 // clang-format off
@@ -44,17 +46,27 @@ int main(int argc, char **argv)
 		return fd;
 	}
 
-// Note that the GlobalStandards Client API supports at most 4 arguments
-#define ARGS_LEN 0
 	union {
 		struct tee_ioctl_open_session_arg arg;
 		uint8_t data[sizeof(struct tee_ioctl_open_session_arg) +
-			     sizeof(struct tee_ioctl_param) * ARGS_LEN];
+			     sizeof(struct tee_ioctl_param) * TEEC_CONFIG_PAYLOAD_REF_COUNT];
 	} open_session_arg;
 	struct tee_ioctl_buf_data open_session_buf_data = { .buf_len = sizeof(open_session_arg), .buf_ptr = (uintptr_t)&open_session_arg };
 	struct tee_ioctl_open_session_arg *open_session = &open_session_arg.arg;
 	open_session->clnt_login = TEE_IOCTL_LOGIN_PUBLIC;
-	open_session->num_params = 0;
+	open_session->num_params = TEEC_CONFIG_PAYLOAD_REF_COUNT;
+
+	open_session->params[0].attr = TEE_IOCTL_PARAM_ATTR_TYPE_VALUE_INOUT;
+	open_session->params[0].a = 0xaaaa;
+	open_session->params[0].b = 0xbbbb;
+	open_session->params[0].c = 0xcccc;
+	open_session->params[1].attr = TEE_IOCTL_PARAM_ATTR_TYPE_VALUE_INPUT;
+	open_session->params[1].a = 0x1111;
+	open_session->params[1].b = 0x2222;
+	open_session->params[1].c = 0x3333;
+	open_session->params[2].attr = TEE_IOCTL_PARAM_ATTR_TYPE_NONE;
+	open_session->params[3].attr = TEE_IOCTL_PARAM_ATTR_TYPE_NONE;
+
 	memcpy(open_session->uuid, TA_UUID, sizeof(TA_UUID));
 	if ((rc = ioctl(fd, TEE_IOC_OPEN_SESSION, &open_session_buf_data))) {
 		perror("failed ioctl for OPEN_SESSION");
@@ -63,7 +75,7 @@ int main(int argc, char **argv)
 	printf("session opened\n\tret: %u\n\torigin: %u\n\tsession_id: %u\n",
 	       open_session->ret, open_session->ret_origin, open_session->session);
 	unsigned int session_id = open_session->session;
-
+/*
 	const size_t arg_size = sizeof(struct tee_ioctl_invoke_arg) + 1 * sizeof(struct tee_ioctl_param);
 	union {
 		struct tee_ioctl_invoke_arg arg;
@@ -97,6 +109,6 @@ int main(int argc, char **argv)
 		return rc;
 	}
 	printf("session closed successfully\n");
-
+*/
 	return 0;
 }

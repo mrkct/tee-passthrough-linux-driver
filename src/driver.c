@@ -13,6 +13,7 @@
 #include <linux/platform_device.h>
 #include "register_map.h"
 #include "driver.h"
+#include "tee_client_api.h"
 
 static struct tee_device *tee_dev;
 
@@ -39,26 +40,18 @@ inline bool last_operation_completed_successfully(void)
 	return !(*reg_status & TP_MMIO_REG_STATUS_FLAG_ERROR);
 }
 
+// Note: You need to ensure that 'buf' was allocated via kmalloc
+//       or this won't
 static int make_external_ioctl(int fd, uint64_t ioctl, void *buf, size_t buf_len)
 {
-	// Note: we need to ensure that buf was allocated via kmalloc or we
-	// cannot get the physical address of the area
-	void *temp_buf = kzalloc(buf_len, GFP_KERNEL);
-
-	if (temp_buf == NULL) {
-		return -ENOMEM;
-	}
-
 	wait_until_not_busy();
 
 	*reg_ioctl_num = ioctl;
-	*reg_ioctl_phys_data_buffer = virt_to_phys(temp_buf);
+	*reg_ioctl_phys_data_buffer = virt_to_phys(buf);
 	*reg_ioctl_phys_data_buffer_length = buf_len;
 	*reg_ioctl_fd = fd;
 
 	wait_until_not_busy();
-	memcpy(buf, temp_buf, buf_len);
-	kfree(temp_buf);
 
 	if (!last_operation_completed_successfully()) {
 		// FIXME: Actually handle the error
@@ -69,10 +62,25 @@ static int make_external_ioctl(int fd, uint64_t ioctl, void *buf, size_t buf_len
 	return 0;
 }
 
+static void convert_params_to_use_physical_addresses(struct tee_ioctl_param *params, size_t num_params)
+{
+}
+
+static void sync_back_param_changes_after_external_ioctl(struct tee_ioctl_param *user_params, struct tee_ioctl_param *updated_params, size_t num_params)
+{
+	// printf("[tee_passthrough]: sync_back_param_changes_after_external_ioctl (params=%lux, num_params=%u)\n", params, num_params);
+	// for (int i = 0; i < num_params; i++) {
+	// 	printf("[tee_passthrough]: %d: attr=%x   val.a=%x  val.b=%x   val.c=%c\n", i, params[i].attr, params[i].a, params[i].b, params[i].c);
+	// }
+}
+
 static void tp_get_version(struct tee_device *tee_device,
 				struct tee_ioctl_version_data *ver)
 {
-	void *temp_buf = kzalloc(sizeof(*ver), GFP_KERNEL);
+	void *temp_buf;
+
+	pr_info("[tee_passthrough]: tp_get_version was called\n");
+	temp_buf = kzalloc(sizeof(*ver), GFP_KERNEL);
 	if (temp_buf == NULL) {
 		pr_err("[tee_passthrough]: failed to alloc memory, cannot talk with the external tee\n");
 		*ver = (struct tee_ioctl_version_data){
@@ -124,15 +132,106 @@ static int tp_open(struct tee_context *ctx)
 
 static void tp_release(struct tee_context *ctx)
 {
+	struct tee_passthrough_data *ctx_data = ctx->data;
+
 	pr_info("[tee_passthrough]: tp_release was called\n");
+	wait_until_not_busy();
+	*reg_close_tee = ctx_data->fd;
+
+	kfree(ctx_data);
 }
 
 static int tp_open_session(struct tee_context *ctx,
 				struct tee_ioctl_open_session_arg *arg,
 				struct tee_param *param)
 {
-	pr_info("[tee_passthrough]: tp_open_session was called\n");
-	return -1;
+	int rc = 0;
+	int i;
+	struct tee_passthrough_data *ctx_data = ctx->data;
+	struct tee_ioctl_buf_data *local_buf_data = NULL;
+	struct tee_ioctl_open_session_arg *local_arg = NULL;
+	struct tee_ioctl_param *local_params = NULL;
+
+	const size_t arg_size = sizeof(struct tee_ioctl_open_session_arg) +
+		TEEC_CONFIG_PAYLOAD_REF_COUNT * sizeof(struct tee_ioctl_param);
+	const size_t total_memory = sizeof(struct tee_ioctl_buf_data) + arg_size;
+
+#if LOG_ARGS
+	pr_info(
+        "[driver]: uuid: '%x%x%x%x-%x%x-%x%x-%x%x-%x%x%x%x%x%x'\n"
+        "\targ.clnt_uuid: '%x%x%x%x-%x%x-%x%x-%x%x-%x%x%x%x%x%x'\n"
+        "\tclnt_login: %x (TEE_IOCTL_LOGIN_PUBLIC=0)\n"
+        "\tcancel_id: %x\n"
+        "\tsession: %x\n"
+        "\tret: %x\n"
+        "\tret_origin: %x\n"
+        "\tnum_params: %u\n", 
+        arg->uuid[0], arg->uuid[1], arg->uuid[2], arg->uuid[3],
+		arg->uuid[4], arg->uuid[5], arg->uuid[6], arg->uuid[7],
+		arg->uuid[8], arg->uuid[9], arg->uuid[10], arg->uuid[11],
+		arg->uuid[12], arg->uuid[13], arg->uuid[14], arg->uuid[15],
+
+        arg->clnt_uuid[0], arg->clnt_uuid[1], arg->clnt_uuid[2], arg->clnt_uuid[3],
+		arg->clnt_uuid[4], arg->clnt_uuid[5], arg->clnt_uuid[6], arg->clnt_uuid[7],
+		arg->clnt_uuid[8], arg->clnt_uuid[9], arg->clnt_uuid[10], arg->clnt_uuid[11],
+		arg->clnt_uuid[12], arg->clnt_uuid[13], arg->clnt_uuid[14], arg->clnt_uuid[15],
+
+	    arg->clnt_login,
+        arg->cancel_id,
+        arg->session,
+        arg->ret,
+        arg->ret_origin,
+        arg->num_params
+	);
+#endif
+
+	if (arg->num_params > TEEC_CONFIG_PAYLOAD_REF_COUNT) {
+		rc = -EINVAL;
+		arg->ret_origin = TEEC_ORIGIN_API;
+		arg->ret = TEEC_ERROR_BAD_PARAMETERS;
+
+		goto cleanup;
+	}
+	
+	// We want these values to be contiguous in memory
+	local_buf_data = kmalloc(sizeof(total_memory), GFP_KERNEL);
+	local_arg = (struct tee_ioctl_open_session_arg*)(local_buf_data + 1);
+	local_params = (struct tee_ioctl_param*)(local_arg + 1);
+	
+	if (local_buf_data == NULL) {
+		rc = -ENOMEM;
+		arg->ret_origin = TEEC_ORIGIN_API;
+		arg->ret = TEEC_ERROR_OUT_OF_MEMORY;
+
+		goto cleanup;
+	}
+	memset(local_buf_data, 0, total_memory);
+	local_buf_data->buf_ptr = virt_to_phys(local_arg); 
+	local_buf_data->buf_len = arg_size;
+	
+	memcpy(local_arg, arg, sizeof(*local_arg));
+	for (i = 0; i < TEEC_CONFIG_PAYLOAD_REF_COUNT; i++) {
+		local_params[i].attr = param[i].attr;
+		local_params[i].a = param[i].u.value.a;
+		local_params[i].b = param[i].u.value.b;
+		local_params[i].c = param[i].u.value.c;
+	}
+
+	convert_params_to_use_physical_addresses(local_params, arg->num_params);
+
+	rc = make_external_ioctl(
+		ctx_data->fd, 
+		TEE_IOC_OPEN_SESSION, 
+		local_buf_data, sizeof(*local_buf_data)
+	);
+
+	sync_back_param_changes_after_external_ioctl(arg->params, local_params, arg->num_params);
+	memcpy(arg, local_arg, sizeof(*arg));
+cleanup:
+	if (local_buf_data != NULL)
+		kfree(local_buf_data);
+
+	return rc;
 }
 
 static int tp_close_session(struct tee_context *ctx, u32 session)
