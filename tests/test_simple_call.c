@@ -75,24 +75,37 @@ int main(int argc, char **argv)
 	printf("session opened\n\tret: %u\n\torigin: %u\n\tsession_id: %u\n",
 	       open_session->ret, open_session->ret_origin, open_session->session);
 	unsigned int session_id = open_session->session;
-/*
-	const size_t arg_size = sizeof(struct tee_ioctl_invoke_arg) + 1 * sizeof(struct tee_ioctl_param);
+
+	const size_t arg_size = sizeof(struct tee_ioctl_invoke_arg) + 
+		TEEC_CONFIG_PAYLOAD_REF_COUNT * sizeof(struct tee_ioctl_param);
 	union {
 		struct tee_ioctl_invoke_arg arg;
 		uint8_t data[arg_size];
 	} invoke_arg;
 	struct tee_ioctl_buf_data buf_data = {.buf_len = sizeof(invoke_arg), .buf_ptr = (uintptr_t)&invoke_arg };
 	struct tee_ioctl_invoke_arg *arg = &invoke_arg.arg;
+	struct tee_ioctl_param *params = (struct tee_ioctl_param *)(arg + 1);
 
 	arg->session = open_session->session;
 	// ID of the function we want to request inside this TA. We hardcoded this ID in the module
 	arg->func = 1234;
+	arg->num_params = TEEC_CONFIG_PAYLOAD_REF_COUNT;
 	
-	arg->num_params = 1;
-	struct tee_ioctl_param *params = (struct tee_ioctl_param *)(arg + 1);
 	params[0] = (struct tee_ioctl_param){
 		.attr = TEE_IOCTL_PARAM_ATTR_TYPE_VALUE_INOUT, 
-		.a = 1111, .b = 2222, .c = 3333
+		.a = 0x1111, .b = 0x2222, .c = 0x3333
+	};
+	params[1] = (struct tee_ioctl_param){
+		.attr = TEE_IOCTL_PARAM_ATTR_TYPE_NONE, 
+		.a = 0, .b = 0, .c = 0
+	};
+	params[2] = (struct tee_ioctl_param){
+		.attr = TEE_IOCTL_PARAM_ATTR_TYPE_NONE, 
+		.a = 0, .b = 0, .c = 0
+	};
+	params[3] = (struct tee_ioctl_param){
+		.attr = TEE_IOCTL_PARAM_ATTR_TYPE_NONE, 
+		.a = 0, .b = 0, .c = 0
 	};
 
     if ((rc = ioctl(fd, TEE_IOC_INVOKE, &buf_data))) {
@@ -100,7 +113,7 @@ int main(int argc, char **argv)
         return rc;
     }
 	printf("invoke_request: res=%d   ret_origin=%d\n", arg->ret, arg->ret_origin);
-	printf("a=%lld b=%lld c=%lld\n", params[0].a, params[0].b, params[0].c);
+	printf("a=%llx b=%llx c=%llx\n", params[0].a, params[0].b, params[0].c);
 
 	struct tee_ioctl_close_session_arg close_session_arg;
 	close_session_arg.session = session_id;
@@ -109,6 +122,6 @@ int main(int argc, char **argv)
 		return rc;
 	}
 	printf("session closed successfully\n");
-*/
+
 	return 0;
 }
