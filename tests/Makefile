@@ -14,5 +14,8 @@ all: $(PROGRAMS)
 clean:
 	rm -f $(PROGRAMS)
 
-%: %.c
-	$(CC) $(CFLAGS) $< -o $@
+libteec/libteec.a: 
+	$(MAKE) -C libteec all
+
+%: %.c libteec/libteec.a
+	$(CC) $(CFLAGS) $< -o $@ libteec/libteec.a
