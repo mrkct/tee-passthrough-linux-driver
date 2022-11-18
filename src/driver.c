@@ -25,7 +25,7 @@ static volatile uint64_t *reg_command_ptr;
 static volatile uint32_t *reg_send_command;
 
 #define LOG_SPAM 0
-#define IS_MEMREF(a)                                                      \
+#define IS_MEMREF(a)                                                           \
 	(a == TEE_IOCTL_PARAM_ATTR_TYPE_MEMREF_OUTPUT ||                       \
 	 a == TEE_IOCTL_PARAM_ATTR_TYPE_MEMREF_INOUT ||                        \
 	 a == TEE_IOCTL_PARAM_ATTR_TYPE_MEMREF_INPUT)
@@ -110,10 +110,8 @@ actually_sync:
 	}
 
 	rc = wrap_and_send_command_to_passthrough(
-		TP_CMD_EnsureMemoryBuffersAreSynchronized, 
-		command, 
-		sizeof(*command)
-	);
+		TP_CMD_EnsureMemoryBuffersAreSynchronized, command,
+		sizeof(*command));
 
 	kfree(command);
 
@@ -127,7 +125,6 @@ static int sync_back_param_changes_after_command(
 {
 	int i, rc = 0;
 
-	// pr_info("[driver]: sync_back_param_changes_after_external_ioctl\n");
 	for (i = 0; i < num_params; i++) {
 		if (user_params[i].attr != updated_params[i].attr) {
 			pr_info("[driver]: local.attr = %llx    updated.attr = %llx\n",
@@ -135,9 +132,10 @@ static int sync_back_param_changes_after_command(
 			panic("[driver]: local and copied params do not have the same attr!");
 		}
 
-		if (user_params[i].attr == TEE_IOCTL_PARAM_ATTR_TYPE_VALUE_INOUT ||
-			user_params[i].attr == TEE_IOCTL_PARAM_ATTR_TYPE_VALUE_OUTPUT) {
-
+		if (user_params[i].attr ==
+			    TEE_IOCTL_PARAM_ATTR_TYPE_VALUE_INOUT ||
+		    user_params[i].attr ==
+			    TEE_IOCTL_PARAM_ATTR_TYPE_VALUE_OUTPUT) {
 			user_params[i].u.value.a = updated_params[i].a;
 			user_params[i].u.value.b = updated_params[i].b;
 			user_params[i].u.value.c = updated_params[i].c;
@@ -278,7 +276,8 @@ static int tp_open_session(struct tee_context *ctx,
 		cloned_params[i].c = params[i].u.value.c;
 	}
 
-	ensure_memrefs_in_params_are_synched_with_host(ctx, params, arg->num_params);
+	ensure_memrefs_in_params_are_synched_with_host(ctx, params,
+						       arg->num_params);
 	// FIXME: Handle the error returned by the following call
 	wrap_and_send_command_to_passthrough(TP_CMD_OpenSession, cmd,
 					     size_of_command_plus_params);
@@ -356,8 +355,6 @@ static int tp_invoke_func(struct tee_context *ctx,
 	cmd->fd = ctx_data->fd;
 	memcpy(&cmd->invoke_function_arg, arg, sizeof(*arg));
 	for (i = 0; i < TEEC_CONFIG_PAYLOAD_REF_COUNT; i++) {
-		pr_info("[driver]: param %d {.a = %llx, .b=%llx, .c=%llx}\n", i, params[i].u.value.a, params[i].u.value.b, params[i].u.value.c);
-		
 		cloned_params[i].attr = params[i].attr;
 		if (IS_MEMREF(params[i].attr)) {
 			cloned_params[i].a = params[i].u.memref.shm_offs;
@@ -370,7 +367,8 @@ static int tp_invoke_func(struct tee_context *ctx,
 		}
 	}
 
-	ensure_memrefs_in_params_are_synched_with_host(ctx, params, arg->num_params);
+	ensure_memrefs_in_params_are_synched_with_host(ctx, params,
+						       arg->num_params);
 	// FIXME: Handle the error returned by the following call
 	wrap_and_send_command_to_passthrough(TP_CMD_InvokeFunction, cmd,
 					     size_of_command_plus_params);
@@ -444,9 +442,20 @@ static int tp_pool_alloc(struct tee_shm_pool_mgr *pool, struct tee_shm *shm,
 
 static void tp_pool_free(struct tee_shm_pool_mgr *pool, struct tee_shm *shm)
 {
+	struct CommandFreeSharedMemoryBuffer *command;
+	struct tee_passthrough_data *ctx_data = shm->ctx->data;
+
 	free_pages((unsigned long)shm->kaddr, get_order(shm->size));
 	shm->kaddr = NULL;
-	// TODO: call qemu and free the associated space
+
+	command = kmalloc(sizeof(*command), GFP_KERNEL);
+	if (command == NULL)
+		panic("out of memory");
+
+	command->guest_fd = ctx_data->fd;
+	command->shmem_id = shm->id;
+	wrap_and_send_command_to_passthrough(TP_CMD_FreeSharedMemoryBuffer,
+					     command, sizeof(*command));
 }
 
 static void tp_pool_destroy(struct tee_shm_pool_mgr *pool)
@@ -520,7 +529,7 @@ static int tp_driver_init(void)
 	reg_open_tee = (uint64_t *)&base[TP_MMIO_REG_OFFSET_OPEN_TEE];
 	reg_close_tee = (uint64_t *)&base[TP_MMIO_REG_OFFSET_CLOSE_TEE];
 	reg_status = (uint64_t *)&base[TP_MMIO_REG_OFFSET_STATUS];
-	reg_command_ptr = (uint64_t *) &base[TP_MMIO_REG_OFFSET_COMMAND_PTR];
+	reg_command_ptr = (uint64_t *)&base[TP_MMIO_REG_OFFSET_COMMAND_PTR];
 	reg_send_command = (uint32_t *)&base[TP_MMIO_REG_OFFSET_SEND_COMMAND];
 
 	pr_info("[tee_passthrough]: Allocating the shared memory pool\n");
@@ -539,7 +548,8 @@ static int tp_driver_init(void)
 
 	rc = tee_device_register(tee_dev);
 	if (rc) {
-		pr_err("[tee_passthrough]: Fatal while registering the device. Err: %d\n", rc);
+		pr_err("[tee_passthrough]: Fatal while registering the device. Err: %d\n",
+		       rc);
 	}
 	return rc;
 }
