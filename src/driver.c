@@ -214,7 +214,7 @@ static int tp_open_session(struct tee_context *ctx,
 			   struct tee_ioctl_open_session_arg *arg,
 			   struct tee_param *params)
 {
-	int i;
+	int i, rc;
 	struct tee_passthrough_data *ctx_data = ctx->data;
 	struct CommandOpenSession *cmd = NULL;
 	const size_t size_of_command_plus_params =
@@ -248,6 +248,7 @@ static int tp_open_session(struct tee_context *ctx,
 #endif
 
 	if (arg->num_params > TEEC_CONFIG_PAYLOAD_REF_COUNT) {
+		pr_err("[driver]: arg->num_params > TEEC_CONFIG_PAYLOAD_REF_COUNT\n");
 		arg->ret_origin = TEEC_ORIGIN_API;
 		arg->ret = TEEC_ERROR_BAD_PARAMETERS;
 
@@ -259,6 +260,7 @@ static int tp_open_session(struct tee_context *ctx,
 	cloned_params = (struct tee_ioctl_param *)(cmd + 1);
 
 	if (cmd == NULL) {
+		pr_err("[driver]: kmalloc failed");
 		arg->ret_origin = TEEC_ORIGIN_API;
 		arg->ret = TEEC_ERROR_OUT_OF_MEMORY;
 
@@ -278,9 +280,13 @@ static int tp_open_session(struct tee_context *ctx,
 
 	ensure_memrefs_in_params_are_synched_with_host(ctx, params,
 						       arg->num_params);
-	// FIXME: Handle the error returned by the following call
-	wrap_and_send_command_to_passthrough(TP_CMD_OpenSession, cmd,
-					     size_of_command_plus_params);
+
+	if ((rc = wrap_and_send_command_to_passthrough(TP_CMD_OpenSession, cmd,
+					     size_of_command_plus_params))) {
+		arg->ret_origin = TEEC_ORIGIN_COMMS;
+		arg->ret = rc;
+	}
+	
 	sync_back_param_changes_after_command(ctx, params, cloned_params,
 					      arg->num_params);
 	memcpy(arg, &cmd->open_session_arg, sizeof(*arg));
@@ -312,7 +318,7 @@ static int tp_invoke_func(struct tee_context *ctx,
 			  struct tee_ioctl_invoke_arg *arg,
 			  struct tee_param *params)
 {
-	int i;
+	int i, rc;
 	struct tee_passthrough_data *ctx_data = ctx->data;
 	struct CommandInvokeFunction *cmd = NULL;
 	const size_t size_of_command_plus_params =
@@ -335,6 +341,7 @@ static int tp_invoke_func(struct tee_context *ctx,
 	if (arg->num_params > TEEC_CONFIG_PAYLOAD_REF_COUNT) {
 		arg->ret_origin = TEEC_ORIGIN_API;
 		arg->ret = TEEC_ERROR_BAD_PARAMETERS;
+		pr_err("[driver]: arg->num_params > TEEC_CONFIG_PAYLOAD_REF_COUNT\n");
 
 		return -EINVAL;
 	}
@@ -369,9 +376,11 @@ static int tp_invoke_func(struct tee_context *ctx,
 
 	ensure_memrefs_in_params_are_synched_with_host(ctx, params,
 						       arg->num_params);
-	// FIXME: Handle the error returned by the following call
-	wrap_and_send_command_to_passthrough(TP_CMD_InvokeFunction, cmd,
-					     size_of_command_plus_params);
+	if ((rc = wrap_and_send_command_to_passthrough(TP_CMD_InvokeFunction, cmd,
+					     size_of_command_plus_params))) {
+		arg->ret_origin = TEEC_ORIGIN_COMMS;
+		arg->ret = rc;
+	}
 	sync_back_param_changes_after_command(ctx, params, cloned_params,
 					      arg->num_params);
 	memcpy(arg, &cmd->invoke_function_arg, sizeof(*arg));
