@@ -30,6 +30,15 @@ static volatile uint32_t *reg_send_command;
 	 a == TEE_IOCTL_PARAM_ATTR_TYPE_MEMREF_INOUT ||                        \
 	 a == TEE_IOCTL_PARAM_ATTR_TYPE_MEMREF_INPUT)
 
+#define ATTR_TO_STR(a) \
+	(a) == TEE_IOCTL_PARAM_ATTR_TYPE_VALUE_INPUT ? "VALUE_INPUT" : \
+	(a) == TEE_IOCTL_PARAM_ATTR_TYPE_VALUE_OUTPUT ? "VALUE_OUTPUT" : \
+	(a) == TEE_IOCTL_PARAM_ATTR_TYPE_VALUE_INOUT ? "VALUE_INOUT" : \
+	(a) == TEE_IOCTL_PARAM_ATTR_TYPE_MEMREF_INPUT ? "MEMREF_INPUT" : \
+	(a) == TEE_IOCTL_PARAM_ATTR_TYPE_MEMREF_OUTPUT ? "MEMREF_OUTPUT" : \
+	(a) == TEE_IOCTL_PARAM_ATTR_TYPE_MEMREF_INOUT ? "MEMREF_INOUT" : \
+	(a) == TEE_IOCTL_PARAM_ATTR_TYPE_NONE ? "NONE" : "INVALID_ATTR"
+
 inline void wait_until_not_busy(void)
 {
 	// FIXME: This should take a lock instead
@@ -139,6 +148,11 @@ static int sync_back_param_changes_after_command(
 			user_params[i].u.value.a = updated_params[i].a;
 			user_params[i].u.value.b = updated_params[i].b;
 			user_params[i].u.value.c = updated_params[i].c;
+		} else if (user_params[i].attr == TEE_IOCTL_PARAM_ATTR_TYPE_MEMREF_INOUT || user_params[i].attr == TEE_IOCTL_PARAM_ATTR_TYPE_MEMREF_OUTPUT) {
+			// I'm sure the size can change, otherwise regression 8001.* all fail because they start at size 2048 and shrink to 42 after
+			// I'm not sure about the offset though, it shouldn't hurt to rewrite it though
+			user_params[i].u.memref.shm_offs = updated_params[i].a;
+			user_params[i].u.memref.size = updated_params[i].b;
 		}
 	}
 
