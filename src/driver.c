@@ -20,7 +20,6 @@ static struct tee_device *tee_dev;
 static uint8_t *mmio_reg_base_address;
 static volatile uint64_t *reg_open_tee;
 static volatile uint64_t *reg_close_tee;
-static volatile uint64_t *reg_status;
 static volatile uint64_t *reg_command_ptr;
 static volatile uint32_t *reg_send_command;
 
@@ -38,13 +37,6 @@ static volatile uint32_t *reg_send_command;
 	(a) == TEE_IOCTL_PARAM_ATTR_TYPE_MEMREF_OUTPUT ? "MEMREF_OUTPUT" : \
 	(a) == TEE_IOCTL_PARAM_ATTR_TYPE_MEMREF_INOUT ? "MEMREF_INOUT" : \
 	(a) == TEE_IOCTL_PARAM_ATTR_TYPE_NONE ? "NONE" : "INVALID_ATTR"
-
-inline void wait_until_not_busy(void)
-{
-	// FIXME: This should take a lock instead
-	while (ioread64(reg_status) & TP_MMIO_REG_STATUS_FLAG_BUSY)
-		;
-}
 
 // Note: You need to ensure that 'buf' was allocated via kmalloc
 //       or this won't
@@ -64,10 +56,8 @@ static int wrap_and_send_command_to_passthrough(enum CommandId command_id,
 	wrapper->data = (uint64_t)virt_to_phys(data);
 	wrapper->data_length = data_length;
 
-	wait_until_not_busy();
 	iowrite64(virt_to_phys(wrapper), reg_command_ptr);
 	rc = ioread32(reg_send_command);
-	wait_until_not_busy();
 
 	kfree(wrapper);
 
@@ -191,7 +181,6 @@ static int tp_open(struct tee_context *ctx)
 	pr_info("[tee_passthrough]: reg_base=%px\n", mmio_reg_base_address);
 	pr_info("[tee_passthrough]: reg_open_tee=%px\n", reg_open_tee);
 
-	wait_until_not_busy();
 	pr_info("[tee_passthrough]: not busy, going to open tee\n");
 	fd = (int)ioread64(reg_open_tee);
 	if (fd < 0) {
@@ -214,7 +203,6 @@ static void tp_release(struct tee_context *ctx)
 	struct tee_passthrough_data *ctx_data = ctx->data;
 
 	pr_info("[tee_passthrough]: tp_release was called\n");
-	wait_until_not_busy();
 	iowrite64((uint64_t)ctx_data->fd, reg_close_tee);
 
 	kfree(ctx_data);
@@ -547,7 +535,6 @@ static int tp_driver_init(void)
 	mmio_reg_base_address = base;
 	reg_open_tee = (uint64_t *)&base[TP_MMIO_REG_OFFSET_OPEN_TEE];
 	reg_close_tee = (uint64_t *)&base[TP_MMIO_REG_OFFSET_CLOSE_TEE];
-	reg_status = (uint64_t *)&base[TP_MMIO_REG_OFFSET_STATUS];
 	reg_command_ptr = (uint64_t *)&base[TP_MMIO_REG_OFFSET_COMMAND_PTR];
 	reg_send_command = (uint32_t *)&base[TP_MMIO_REG_OFFSET_SEND_COMMAND];
 
