@@ -46,11 +46,6 @@ inline void wait_until_not_busy(void)
 		;
 }
 
-inline bool last_operation_completed_successfully(void)
-{
-	return !(ioread64(reg_status) & TP_MMIO_REG_STATUS_FLAG_ERROR);
-}
-
 // Note: You need to ensure that 'buf' was allocated via kmalloc
 //       or this won't
 static int wrap_and_send_command_to_passthrough(enum CommandId command_id,
@@ -199,10 +194,10 @@ static int tp_open(struct tee_context *ctx)
 	wait_until_not_busy();
 	pr_info("[tee_passthrough]: not busy, going to open tee\n");
 	fd = (int)ioread64(reg_open_tee);
-	if (!last_operation_completed_successfully()) {
-		pr_info("[tee_passthrough]: error flag is set, something bad happened");
+	if (fd < 0) {
+		pr_info("[tee_passthrough]: Failed to open tee, fd=%d\n", fd);
 		kfree(ctx_data);
-		return -EAGAIN;
+		return fd;
 	}
 
 	pr_info("[tee_passthrough]: Internal fd is %d\n", fd);
