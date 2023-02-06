@@ -57,6 +57,7 @@ static int wrap_and_send_command_to_passthrough(enum CommandId command_id,
 						void *data, size_t data_length)
 {
 	struct CommandWrapper *wrapper = NULL;
+	int rc;
 
 	if (command_id >= __TP_CMD_Len || command_id < 0)
 		return -ENOTSUPP;
@@ -70,15 +71,15 @@ static int wrap_and_send_command_to_passthrough(enum CommandId command_id,
 
 	wait_until_not_busy();
 	iowrite64(virt_to_phys(wrapper), reg_command_ptr);
-	iowrite32(1, reg_send_command);
+	rc = ioread32(reg_send_command);
 	wait_until_not_busy();
 
 	kfree(wrapper);
 
-	if (!last_operation_completed_successfully()) {
+	if (rc < 0) {
 		// FIXME: Actually handle the error
-		pr_info("[tee_passthrough]: Something went wrong while making the ioctl\n");
-		return -ENOTSUPP;
+		pr_info("[tee_passthrough]: Something went wrong with the request. rc=%d\n", rc);
+		return rc;
 	}
 
 	return 0;
